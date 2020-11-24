@@ -1,16 +1,37 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <WiFiUdp.h>
 #include <Wire.h>
 #include <RTClib.h> //adafruit
 #include <TM1637Display.h> //orpaz
 #include <NTP.h> //github.com/sstaub/NTP
 #include <WiFiClient.h>
-#include <ESP8266HTTPClient.h>
 #include <DHTesp.h>
 #include <EasyButton.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WebServer.h>
+#include <ArduinoJson.h>
+#include <Adafruit_MQTT.h>
+#include <Adafruit_MQTT_Client.h>
+
+#define SENSOR_TYPE     "dht22"
+#define SENSOR_IP       55
+
+// mqtt
+#define AIO_SERVER      "192.168.22.5"
+#define AIO_SERVERPORT  1883 // use 8883 for SSL
+#define AIO_USERNAME    ""
+#define AIO_KEY         ""
+#define AIO_FEED   
+
+// MQTT
+WiFiClient client;
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
+//Adafruit_MQTT_Publish sensor_pub = Adafruit_MQTT_Publish(&mqtt, AIO_FEED);
+
+// JSON
+StaticJsonDocument<200> jdoc;
 
 // RTC
 RTC_DS3231 rtc;
@@ -41,6 +62,8 @@ IPAddress gateway(192,168,22,2);
 IPAddress dns1(192,168,22,6);
 IPAddress dns2(8,8,4,4);
 
+String mqtt_topic_str = ""; // mqtt topic with sensor_id
+
 // Button
 const int button_pin = 16;
 EasyButton button(button_pin, 100, false, false);
@@ -66,7 +89,6 @@ ESP8266WebServer server(80);
 
 // defaults
 void connectWIFI();
-void sendHTTP(const float &temperature, const float &humidity);
 void getDHT22(bool sendhttp);
 void checkBrightnessAuto(const DateTime& dt);
 void syncNTP(const DateTime& dt);
@@ -79,6 +101,8 @@ void handle_NotFound();
 void handle_OnConnect();
 void handle_updateNTP();
 String SendHTML(const DateTime& dt1, char* dt2);
+void getSi7021();
+void MQTT_connect(const char *payload);
 
 void setup() {
   // Turn off wifi
@@ -92,9 +116,8 @@ void setup() {
   Serial.println();
   Serial.println();
   Serial.println();
-  Serial.print("Booting... Compiled: ");
-  Serial.print((__DATE__, __TIME__));
-  Serial.println();
+  // Start Boot
+  Serial.printf("\n\nBooting... Compiled: %s", __TIMESTAMP__);
   
   // DEBUG Initial date & time
   //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
@@ -229,40 +252,42 @@ void connectWIFI(){
   }
 }
 
-void sendHTTP(const float &temperature, const float &humidity){ 
-      WiFiClient client;
-      HTTPClient http;
-      Serial.print("HTTP: Sending ");
-      String httpaddress = "http://192.168.22.9/insertDB.php?type=dht22&id=2003&val1=";
-      httpaddress += temperature;
-      httpaddress += "&val2=";
-      httpaddress += humidity;
-      Serial.println(httpaddress);
-      Serial.print("HTTP: Sending ");
-      if (http.begin(client, httpaddress)) {
-        int httpCode = http.GET();
-        if (httpCode > 0) {
-          Serial.print("GET code: ");
-          Serial.print(httpCode);
-          //Serial.printf("GET... code: %d\n", httpCode);
-          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-            //String payload = http.getString();
-            //Serial.println(payload);
-            Serial.println(" success");
-          }
-        } else {
-            Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-        }
-        http.end();
-      } else {
-        Serial.printf("[HTTP} Unable to connect\n");
-      }
+void MQTT_connect(const char *payload) {
+  int8_t ret;
+  uint8_t retries = 3;
+  // dynamic topic
+  const char *mqtt_topic = mqtt_topic_str.c_str();
+  Adafruit_MQTT_Publish sensor_pub = Adafruit_MQTT_Publish(&mqtt, mqtt_topic);
+
+  if (mqtt.connected()) {
+    return;
+  }
+  Serial.printf("[MQTT] Connecting... ");
+  while ((ret = mqtt.connect()) != 0) { 
+    //Serial.printf("\n[MQTT] %s RETRY...", mqtt.connectErrorString(ret));
+    Serial.printf("\n[MQTT] Connection failed RETRY...");
+    mqtt.disconnect();
+    delay(1000);
+    retries--;
+    if (retries == 0) {
+      Serial.printf("TIMEOUT\n");
+    }
+  }
+  Serial.printf("OK\n");
+
+  Serial.printf("[MQTT] %s %s %s\n[MQTT] Sending... ", AIO_SERVER, mqtt_topic, payload);
+  if (! sensor_pub.publish(payload)) {
+    Serial.printf("ERR\n");
+  } else {
+    Serial.printf("OK\n");
+  }
+  delay(250); // debounce
 }
 
 void getDHT22(bool sendhttp) {
     Serial.print("[DHT]: ");
     delay(dht.getMinimumSamplingPeriod());
-    if (dht.getStatusString() == "OK") {
+    //if (dht.getStatusString() == "OK") {
       humidity = dht.getHumidity();
       temperature = dht.getTemperature();
       Serial.println(dht.getStatusString());
@@ -272,7 +297,20 @@ void getDHT22(bool sendhttp) {
       Serial.print(humidity, 1);
       Serial.println("%");
       if (sendhttp) {
-        sendHTTP(temperature, humidity);
+        // generate json
+        jdoc["sid"] = "annauhr";
+        jdoc["type"] = SENSOR_TYPE;
+        jdoc["temperature"] = round(temperature*10)/10.0;
+        jdoc["humidity"] = round(humidity);
+        //jdoc["voltage"] = ESP.getVcc();
+        //jdoc["voltage"] = round(ESP.getVcc())/1000.0;
+        //jdoc["name"] = "sensor";
+        //jdoc["location"] = location;
+        // json serialize
+        char payload[128];
+        serializeJson(jdoc,payload);
+        // send json over mqtt
+        MQTT_connect(payload);
       }
 
       display.clear();
@@ -284,9 +322,9 @@ void getDHT22(bool sendhttp) {
       display.showNumberDec(int(humidity + 0.5), false, 3, 1);
       delay(5000); // display temp
       display.clear();
-    } else {
-      Serial.println(dht.getStatusString());
-    }
+    //} else {
+    //  Serial.println(dht.getStatusString());
+    //}
 }
 
 void checkBrightnessAuto(const DateTime& dt) {
