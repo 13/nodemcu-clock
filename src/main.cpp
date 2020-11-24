@@ -287,7 +287,7 @@ void MQTT_connect(const char *payload) {
 void getDHT22(bool sendhttp) {
     Serial.print("[DHT]: ");
     delay(dht.getMinimumSamplingPeriod());
-    //if (dht.getStatusString() == "OK") {
+    if (dht.getStatusString() == "OK") {
       humidity = dht.getHumidity();
       temperature = dht.getTemperature();
       Serial.println(dht.getStatusString());
@@ -322,9 +322,9 @@ void getDHT22(bool sendhttp) {
       display.showNumberDec(int(humidity + 0.5), false, 3, 1);
       delay(5000); // display temp
       display.clear();
-    //} else {
-    //  Serial.println(dht.getStatusString());
-    //}
+    } else {
+      Serial.println(dht.getStatusString());
+    }
 }
 
 void checkBrightnessAuto(const DateTime& dt) {
