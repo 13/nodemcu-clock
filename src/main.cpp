@@ -2,44 +2,61 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiUdp.h>
-#include <Wire.h>
-#include <RTClib.h> //adafruit
-#include <TM1637Display.h> //orpaz
-#include <NTP.h> //github.com/sstaub/NTP
-#include <WiFiClient.h>
-#include <DHTesp.h>
-#include <EasyButton.h>
-#include <ArduinoOTA.h>
-#include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
 #include <Adafruit_MQTT.h>
 #include <Adafruit_MQTT_Client.h>
+#include <DHTesp.h>
+#include <TM1637Display.h> //orpaz
+#include <NTP.h> //github.com/sstaub/NTP
+#include <Wire.h>
+#include <RTClib.h> //adafruit
+#include <WiFiClient.h>
+#include <EasyButton.h>
+#include <ArduinoOTA.h>
+#include <ESP8266mDNS.h>
+#include <ESP8266WebServer.h>
+
+
+#define SENSOR_PIN_1    0 // sda
+#define SENSOR_PIN_2    2 // sdc
+#define SENSOR_PIN_3    13 // dht
+#define SENSOR_PIN_4    16 // button
 
 #define SENSOR_TYPE     "dht22"
 #define SENSOR_IP       55
+#define SENSOR_GW       6
+#define SENSOR_DNS      6
+#define SENSOR_HN       "annauhr"
+#define DEBUG_MSG       1
 
-// mqtt
+#define WLAN_SSID       ""
+#define WLAN_PASS       ""
+
 #define AIO_SERVER      "192.168.22.5"
 #define AIO_SERVERPORT  1883 // use 8883 for SSL
 #define AIO_USERNAME    ""
 #define AIO_KEY         ""
-#define AIO_FEED   
+#define AIO_FEED        ""
 
-// MQTT
-WiFiClient client;
-Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
-//Adafruit_MQTT_Publish sensor_pub = Adafruit_MQTT_Publish(&mqtt, AIO_FEED);
+#define DS_L            10 // DeepSleep Long minutes
+#define DS_S            3  // DeepSleep Short minutes
 
-// JSON
-StaticJsonDocument<200> jdoc;
+ADC_MODE(ADC_VCC);
+
+// DHT22
+DHTesp dht;
+float humidity;
+float temperature;
+
+// NTPClient
+WiFiUDP wifiUdp;
+NTP ntp(wifiUdp);
 
 // RTC
 RTC_DS3231 rtc;
 
-// Display 
-#define CLK 0
-#define DIO 2
-TM1637Display display(CLK, DIO);
+// TM1637 
+TM1637Display display(SENSOR_PIN_1, SENSOR_PIN_2);
 const uint8_t SEG_BOOT[] = {
     SEG_C | SEG_D | SEG_E | SEG_F | SEG_G, // b
     SEG_C | SEG_D | SEG_E | SEG_G,         // o
@@ -55,41 +72,44 @@ const uint8_t SEG_HUM[] = {
     0x00, 0x00, 0x00
 };
 
-// WiFi Static
-IPAddress ip_static(192,168,22,55);
-IPAddress subnet(255,255,255,0);
-IPAddress gateway(192,168,22,2);
-IPAddress dns1(192,168,22,6);
-IPAddress dns2(8,8,4,4);
-
-String mqtt_topic_str = ""; // mqtt topic with sensor_id
-
 // Button
-const int button_pin = 16;
-EasyButton button(button_pin, 100, false, false);
+EasyButton button(SENSOR_PIN_4, 100, false, false);
 
+// Brightness
 int brightnessLevels[] = {0x00,0x08,0x0f};
 int brightnessLevel = brightnessLevels[2];
-
 boolean brightnessAuto = true;
 DateTime brightnessAutoTime;
 DateTime now;
 
-// NTPClient
-WiFiUDP wifiUdp;
-NTP ntp(wifiUdp);
-
-// DHT
-DHTesp dht;
-float humidity;
-float temperature;
-
 // Webserver
 ESP8266WebServer server(80);
 
-// defaults
+// MQTT
+WiFiClient client;
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
+//Adafruit_MQTT_Publish sensor_pub = Adafruit_MQTT_Publish(&mqtt, AIO_FEED);
+
+// JSON
+StaticJsonDocument<200> jdoc;
+
+// WiFi Static
+IPAddress ip_static(192, 168, 22, SENSOR_IP);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress gateway(192, 168, 22, SENSOR_GW);
+IPAddress dns1(192, 168, 22, SENSOR_DNS);
+
+String sensor_id = ""; // sensor id afterwards generated
+String hn_prefix = ""; // hostname with sensor_id
+String mqtt_topic_str = ""; // mqtt topic with sensor_id
+boolean running = false; // flag to check if running
+
+// platformio fix
+void getDHT22();
+void MQTT_connect(const char *payload);
+unsigned int mac2int(const uint8_t *macAddr);
+void sleepDeep(bool a);
 void connectWIFI();
-void getDHT22(bool sendhttp);
 void checkBrightnessAuto(const DateTime& dt);
 void syncNTP(const DateTime& dt);
 void cycleBrightness(const DateTime& dt);
@@ -101,28 +121,19 @@ void handle_NotFound();
 void handle_OnConnect();
 void handle_updateNTP();
 String SendHTML(const DateTime& dt1, char* dt2);
-void getSi7021();
-void MQTT_connect(const char *payload);
 
 void setup() {
-  // Turn off wifi
-  //WiFi.mode(WIFI_OFF);
-  // Start Serial output 
+  // Start Serial Output
   Serial.begin(9600);
+  delay(10);
+
+  // Start Boot
+  Serial.printf("\n\nBooting... Compiled: %s", __TIMESTAMP__);
   display.clear();
   display.setBrightness(brightnessLevel);
   display.clear();
   display.setSegments(SEG_BOOT);
-  Serial.println();
-  Serial.println();
-  Serial.println();
-  // Start Boot
-  Serial.printf("\n\nBooting... Compiled: %s", __TIMESTAMP__);
-  
-  // DEBUG Initial date & time
-  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  //rtc.adjust(DateTime(2018, 01, 01, 01, 01, 0));
-   // Initialize I2C  
+  // Initialize I2C  
   Wire.begin(); 
   if (rtc.begin()) {
     Serial.println("[RTC]: Started!");
@@ -141,11 +152,25 @@ void setup() {
   }
   showDate("[RTC]:", now);
 
-  // DHT22
-  dht.setup(13, DHTesp::DHT22);
+  // Connect WIFI
+  // Generate sensor_id
+  uint8_t macAddr[6];
+  sensor_id = mac2int(WiFi.macAddress(macAddr));
+  //hn_prefix += sensor_id;
+  hn_prefix += SENSOR_HN;
+  mqtt_topic_str = "sensors/" + sensor_id + "/json";  
 
-  // WIFI
   connectWIFI();
+
+  // mdns
+  //if (!MDNS.begin(hn_prefix)) {
+  if (!MDNS.begin(SENSOR_HN)) {
+    Serial.println("[MDNS] Error setting up responder!");
+  }
+  MDNS.addService("http", "tcp", 80);
+
+  // DHT22
+  dht.setup(SENSOR_PIN_3, DHTesp::DHT22);
 
   // Start NTP
   Serial.print("[NTP]: Starting ");
@@ -174,11 +199,12 @@ void setup() {
   server.on("/updatentp", handle_updateNTP);
   server.onNotFound(handle_NotFound);
   server.begin();
-  Serial.println("[HTTP]: Server started");
+  Serial.println("[HTTP]: Server started");  
 }
 
 void loop() {
   DateTime now = rtc.now();
+  MDNS.update();
 
   /*if (now.second() == 0) {
     showDate("[RTC]:", now);
@@ -194,7 +220,7 @@ void loop() {
        now.minute() == 20 || now.minute() == 30 || 
        now.minute() == 40 || now.minute() == 50 ) && now.second() == 10) {*/
   if (now.second() == 10) {    
-    getDHT22(true);
+    getDHT22();
   }
 
   //if (now.minute() == 5 && now.second() == 2) {
@@ -202,6 +228,7 @@ void loop() {
     syncNTP(now);
   }
 
+  // display every second
   int t = now.hour() * 100 + now.minute();
   //Serial.println(t);
   if (now.second()%2 == 0){
@@ -212,43 +239,44 @@ void loop() {
 
   server.handleClient();
   ArduinoOTA.handle();
-  button.read();
+  button.read();  
 }
 
-void connectWIFI(){
-  // WIFI
-  if (WiFi.status() != WL_CONNECTED){
-    WiFi.hostname("AnnaUhr");
-    WiFi.config(ip_static,gateway,subnet,dns1,dns2);
-    WiFi.begin("muhxnetwork", "Wombat2020");
-    int i = 0;
-    int tout = 40; // 60=30s
-    Serial.print("[WiFi]: Connecting");
-    while (i < tout){
-      if (WiFi.status() == WL_CONNECTED){
-        i = tout+1;
-        Serial.println("OK");
-        Serial.print("[WiFi]: IP: ");
-        Serial.print(WiFi.localIP());
-        Serial.print(", SM: ");
-        Serial.print(WiFi.subnetMask());
-        Serial.print(", GW: ");
-        Serial.print(WiFi.gatewayIP());
-        Serial.print(", DNS1: ");
-        Serial.print(WiFi.dnsIP());
-        Serial.print(", DNS2: ");
-        Serial.println(WiFi.dnsIP(1)); 
-      } else {
-        delay(500);
-        Serial.print(".");
-        ++i;
-      }
-    }
-    if (i == tout) {
-      Serial.println(" ERROR");
-    }
+void getDHT22() {
+  Serial.printf("%s: ", SENSOR_TYPE);
+  delay(dht.getMinimumSamplingPeriod());
+  if (dht.getStatusString() == "OK") {
+    temperature = dht.getTemperature(); 
+    humidity = dht.getHumidity();
+    Serial.printf("%.1fC %.0f%%\n", temperature, humidity);
+    // generate json
+    jdoc["sid"] = sensor_id;
+    jdoc["type"] = SENSOR_TYPE;
+    jdoc["temperature"] = round(temperature*10)/10.0;
+    jdoc["humidity"] = round(humidity);
+    //jdoc["voltage"] = ESP.getVcc();
+    //jdoc["voltage"] = round(ESP.getVcc())/1000.0;
+    //jdoc["name"] = "sensor";
+    //jdoc["location"] = location;
+    // json serialize
+    char payload[128];
+    serializeJson(jdoc,payload);
+    // send json over mqtt
+    MQTT_connect(payload);
+
+    // display dht22
+    display.clear();
+    display.setSegments(SEG_CEL);
+    display.showNumberDec(int(temperature + 0.5), false, 3, 1);
+    delay(5000); // display temp 
+    display.clear();
+    display.setSegments(SEG_HUM);
+    display.showNumberDec(int(humidity + 0.5), false, 3, 1);
+    delay(5000); // display temp
+    display.clear();
+
   } else {
-    Serial.println("WIFI: Already connected");
+    Serial.printf("ERR\n");
   }
 }
 
@@ -271,6 +299,7 @@ void MQTT_connect(const char *payload) {
     retries--;
     if (retries == 0) {
       Serial.printf("TIMEOUT\n");
+      //sleepDeep(false);
     }
   }
   Serial.printf("OK\n");
@@ -278,54 +307,60 @@ void MQTT_connect(const char *payload) {
   Serial.printf("[MQTT] %s %s %s\n[MQTT] Sending... ", AIO_SERVER, mqtt_topic, payload);
   if (! sensor_pub.publish(payload)) {
     Serial.printf("ERR\n");
+    sleepDeep(false);
   } else {
     Serial.printf("OK\n");
   }
   delay(250); // debounce
 }
 
-void getDHT22(bool sendhttp) {
-    Serial.print("[DHT]: ");
-    delay(dht.getMinimumSamplingPeriod());
-    if (dht.getStatusString() == "OK") {
-      humidity = dht.getHumidity();
-      temperature = dht.getTemperature();
-      Serial.println(dht.getStatusString());
-      Serial.print("[DHT]: ");
-      Serial.print(temperature, 1);
-      Serial.print("C ");
-      Serial.print(humidity, 1);
-      Serial.println("%");
-      if (sendhttp) {
-        // generate json
-        jdoc["sid"] = "annauhr";
-        jdoc["type"] = SENSOR_TYPE;
-        jdoc["temperature"] = round(temperature*10)/10.0;
-        jdoc["humidity"] = round(humidity);
-        //jdoc["voltage"] = ESP.getVcc();
-        //jdoc["voltage"] = round(ESP.getVcc())/1000.0;
-        //jdoc["name"] = "sensor";
-        //jdoc["location"] = location;
-        // json serialize
-        char payload[128];
-        serializeJson(jdoc,payload);
-        // send json over mqtt
-        MQTT_connect(payload);
-      }
-
-      display.clear();
-      display.setSegments(SEG_CEL);
-      display.showNumberDec(int(temperature + 0.5), false, 3, 1);
-      delay(5000); // display temp 
-      display.clear();
-      display.setSegments(SEG_HUM);
-      display.showNumberDec(int(humidity + 0.5), false, 3, 1);
-      delay(5000); // display temp
-      display.clear();
-    } else {
-      Serial.println(dht.getStatusString());
-    }
+unsigned int mac2int(const uint8_t *macAddr) {
+  char hexAddr[3];
+  sprintf(hexAddr,"%02x%02x%02x\n",macAddr[3], macAddr[4], macAddr[5]);
+  return (int)strtol(hexAddr, 0, 16);
 }
+
+void sleepDeep(bool a) {
+  int ds_t;
+  if (a) {
+    ds_t = DS_L;
+  } else {
+    ds_t = DS_S;
+  }
+#ifdef DEBUG_MSG
+  Serial.printf("Deep Sleep: %dm\n\n", ds_t);
+#endif
+  ESP.deepSleep(ds_t * 60 * 1000000);
+}
+
+void connectWIFI(){
+  if (WiFi.status() != WL_CONNECTED){  
+    // Start WIFI
+    WiFi.hostname(hn_prefix);
+    WiFi.config(ip_static, gateway, subnet, dns1); // set static ip
+    WiFi.begin(WLAN_SSID, WLAN_PASS);
+    Serial.printf("\n%s %s\nSSID: %s connecting", WiFi.macAddress().c_str(),WiFi.hostname().c_str(), WLAN_SSID);
+    int count = 0; int timeout = 30;
+    while (count < timeout) {
+      if (WiFi.status() == WL_CONNECTED) {
+        count = timeout;
+        Serial.printf(" OK\n");
+        Serial.printf("IP: %u.%u.%u.%u ", WiFi.localIP()[0],WiFi.localIP()[1],WiFi.localIP()[2],WiFi.localIP()[3]);
+        Serial.printf("SM: %u.%u.%u.%u ", WiFi.subnetMask()[0],WiFi.subnetMask()[1],WiFi.subnetMask()[2],WiFi.subnetMask()[3]);
+        Serial.printf("GW: %u.%u.%u.%u ", WiFi.gatewayIP()[0],WiFi.gatewayIP()[1],WiFi.gatewayIP()[2],WiFi.gatewayIP()[3]);
+        Serial.printf("DNS: %u.%u.%u.%u\n", WiFi.dnsIP()[0],WiFi.dnsIP()[1],WiFi.dnsIP()[2],WiFi.dnsIP()[3]);
+      } else {
+        delay(500);
+        Serial.printf(".");
+        ++count;
+      }
+    }
+    if (WiFi.status() != WL_CONNECTED){
+      Serial.printf(" ERR\n");
+    }
+  }
+}
+
 
 void checkBrightnessAuto(const DateTime& dt) {
   if (brightnessAuto){
@@ -343,7 +378,6 @@ void checkBrightnessAuto(const DateTime& dt) {
         Serial.println("Brightness LOW"); 
       }
     }  
-    
   } else {
     Serial.println("[AUTOMODE]: OFF");
     if (dt.hour() > brightnessAutoTime.hour()){
@@ -402,7 +436,7 @@ void onPressed() {
 
 void onPressedForDuration() {
     Serial.println("BUTTON: long press");
-    getDHT22(false);
+    getDHT22();
 }
 
 void showDate(const char* txt, const DateTime& dt) {
@@ -478,7 +512,7 @@ String SendHTML(const DateTime& dt1, char* dt2){
   ptr += showDateString(dt1);
   ptr += "</div></div><div class=\"row border border-top-0\"><div class=\"col\">NTP:</div><div class=\"col\">";
   ptr += dt2;
-  ptr += "</div></div><div class=\"row mb-3\"><div class=\"col text-right p-0\"> <a class=\"btn btn-primary btn-sm btn-block\" href=\"/updatentp\" role=\"button\">Update</a></div></div><div class=\"row border rounded-top bg-light small\"><div class=\"col\">HN:</div><div class=\"col font-weight-bold\">";
+  ptr += "</div></div><div class=\"row mb-3\"><div class=\"col text-right p-0\"> <a class=\"btn btn-primary btn-sm btn-block\" href=\"/updatentp\" role=\"button\">Sync</a></div></div><div class=\"row border rounded-top bg-light small\"><div class=\"col\">HN:</div><div class=\"col font-weight-bold\">";
   ptr += WiFi.hostname();
   ptr += "</div></div><div class=\"row border border-top-0 small\"><div class=\"col\">IP:</div><div class=\"col\">";
   ptr += WiFi.localIP().toString().c_str();
