@@ -29,8 +29,8 @@
 #define SENSOR_HN       "annauhr"
 #define DEBUG_MSG       1
 
-#define WLAN_SSID       ""
-#define WLAN_PASS       ""
+#define WLAN_SSID       "ssid"
+#define WLAN_PASS       "pass"
 
 #define AIO_SERVER      "192.168.22.5"
 #define AIO_SERVERPORT  1883 // use 8883 for SSL
@@ -502,9 +502,9 @@ void handle_updateNTP() {
 String SendHTML(const DateTime& dt1, char* dt2){
   String ptr = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"https://stackpath.bootstrapcdn.com/bootstrap/5.0.0-alpha2/css/bootstrap.min.css\" integrity=\"sha384-DhY6onE6f3zzKbjUPRc2hOzGAdEf4/Dz+WJwBvEYL/lkkIsI3ihufq9hk9K4lVoK\" crossorigin=\"anonymous\"><title>";
   ptr += WiFi.hostname();
-  ptr += "</title></head><body> <nav class=\"navbar navbar-expand navbar-dark text-white\" style=\"background-color: #000;\"><div class=\"container px-1\" style=\"max-width: 360px !important\"> <a class=\"btn btn-sm btn-outline-light\" href=\"http://192.168.22.5/\"> <svg width=\"1em\" height=\"1em\" viewBox=\"0 0 16 16\" class=\"bi bi-front\" fill=\"currentColor\" xmlns=\"http://www.w3.org/2000/svg\"> <path fill-rule=\"evenodd\" d=\"M0 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2H2a2 2 0 0 1-2-2V2zm5 10v2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2v5a2 2 0 0 1-2 2H5z\"/> </svg> </a> <button class=\"navbar-toggler\" type=\"button\" data-toggle=\"collapse\" data-target=\"#navbarNav\" aria-controls=\"navbarNav\" aria-expanded=\"false\" aria-label=\"Toggle navigation\"> <span class=\"navbar-toggler-icon\"/> </button><div class=\"collapse navbar-collapse\" id=\"navbarNav\"><ul class=\"navbar-nav m-auto\"><li class=\"nav-item\"> <a class=\"nav-link active font-weight-bold\" aria-current=\"page\" href=\"http://192.168.22.55/\">";
+  ptr += "</title></head><body> <nav class=\"navbar navbar-expand navbar-light bg-light\"><div class=\"container px-1\" style=\"max-width: 360px !important\"> <a class=\"btn btn-sm btn-outline-dark\" href=\"http://192.168.22.5/\"> <svg width=\"1em\" height=\"1em\" viewBox=\"0 0 16 16\" class=\"bi bi-front\" fill=\"currentColor\" xmlns=\"http://www.w3.org/2000/svg\"> <path fill-rule=\"evenodd\" d=\"M0 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2H2a2 2 0 0 1-2-2V2zm5 10v2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2v5a2 2 0 0 1-2 2H5z\"/> </svg> </a> <button class=\"navbar-toggler\" type=\"button\" data-toggle=\"collapse\" data-target=\"#navbarNav\" aria-controls=\"navbarNav\" aria-expanded=\"false\" aria-label=\"Toggle navigation\"> <span class=\"navbar-toggler-icon\"/> </button><div class=\"collapse navbar-collapse\" id=\"navbarNav\"><ul class=\"navbar-nav m-auto\"><li class=\"nav-item\"> <a class=\"nav-link active font-weight-bold\" aria-current=\"page\" href=\"http://192.168.22.55/\">";
   ptr += WiFi.hostname();
-  ptr += "</a></li></ul> <a class=\"btn btn-sm btn-outline-light\" aria-current=\"page\" href=\"#\" onclick=\"location.reload(true)\"> <svg width=\"1em\" height=\"1em\" viewBox=\"0 0 16 16\" class=\"bi bi-arrow-clockwise\" fill=\"currentColor\" xmlns=\"http://www.w3.org/2000/svg\"> <path fill-rule=\"evenodd\" d=\"M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z\"/> <path d=\"M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z\"/> </svg> </a></div></div> </nav><div class=\"container\" style=\"max-width: 360px !important\"><div class=\"row my-3 h1 bg-light border rounded\"><div class=\"col text-right\">";
+  ptr += "</a></li></ul> <a class=\"btn btn-sm btn-outline-dark\" aria-current=\"page\" href=\"#\" onclick=\"location.reload(true)\"> <svg width=\"1em\" height=\"1em\" viewBox=\"0 0 16 16\" class=\"bi bi-arrow-clockwise\" fill=\"currentColor\" xmlns=\"http://www.w3.org/2000/svg\"> <path fill-rule=\"evenodd\" d=\"M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z\"/> <path d=\"M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z\"/> </svg> </a></div></div> </nav><div class=\"container\" style=\"max-width: 360px !important\"><div class=\"row my-3 h1 bg-light border rounded\"><div class=\"col text-right\">";
   ptr += temperature;
   ptr += "&deg;</div><div class=\"col\">";
   ptr += humidity;
